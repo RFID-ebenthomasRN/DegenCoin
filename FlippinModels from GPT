@@ -1,0 +1,109 @@
+import logging
+import time
+import tkinter as tk
+from tkinter import messagebox
+from tkinter import ttk
+import numpy as np
+from keras.layers import LSTM, Dense
+from keras.models import Sequential
+from keras.models import load_model
+from keras.optimizers import Adam
+import configparser
+import asyncio
+
+# Initialize logging
+logging.basicConfig(filename="app.log", level=logging.INFO, format="%(asctime)s - %(message)s")
+
+# Load configuration from file
+config = configparser.ConfigParser()
+config.read('config.ini')
+TRAINING_THRESHOLD = int(config['DEFAULT']['TrainingThreshold'])
+
+class ModelBuilder:
+    @staticmethod
+    def build_model():
+        """Build and return a Keras Sequential model."""
+        model = Sequential()
+        model.add(LSTM(4, input_shape=(50, 1)))
+        model.add(Dense(1, activation='sigmoid'))
+        opt = Adam(learning_rate=0.01, decay=1e-6)
+        model.compile(loss='binary_crossentropy', optimizer=opt)
+        return model
+class FlipPredictor:
+    def __init__(self, training_threshold=TRAINING_THRESHOLD):
+        self.training_threshold = training_threshold
+        self.flips_history = []
+        self.model = ModelBuilder.build_model()
+
+    def flip(self, outcome):
+        self.flips_history.append(0 if outcome == 'Heads' else 1)
+        if len(self.flips_history) > self.training_threshold:
+            self.train()
+            self.flips_history.pop(0)
+
+    def predict(self):
+        if len(self.flips_history) < 50:
+            return 'Random'
+        else:
+            pred = 'Heads' if self.model.predict(np.asarray([self.flips_history[-50:]]).reshape(1, 50, 1)) > 0.5 else 'Tails'
+            return pred
+
+    def train(self):
+        self.flips_history += [0] * (50 - len(self.flips_history))
+        self.model.fit(np.asarray([self.flips_history]).reshape(1, 50, 1), np.asarray([self.flips_history[-1]]), epochs=1, verbose=0)
+
+class App:
+    def __init__(self, root):
+        self.root = root
+        self.predictor = FlipPredictor()
+        self.frame = tk.Frame(root)
+        self.frame.pack()
+        self.var = tk.StringVar(value='Heads')
+        self.rd1 = tk.Radiobutton(self.frame, text='Heads', variable=self.var, value='Heads')
+        self.rd1.pack(side='left')
+        self.rd2 = tk.Radiobutton(self.frame, text='Tails', variable=self.var, value='Tails')
+        self.rd2.pack(side='left')
+        self.entry = tk.Entry(root)
+        self.entry.pack()
+        self.button = tk.Button(root, text='Submit', command=self.flip)
+        self.button.pack()
+        self.cb_var = tk.StringVar()
+        self.combo = ttk.Combobox(root, textvariable=self.cb_var, values=[100, 200, 300])
+        self.combo.pack()
+        self.combo.bind('<<ComboboxSelected>>', self.on_combobox_change)
+        self.progress = ttk.Progressbar(root, mode='indeterminate', length=200)
+        self.progress.pack()
+        self.save_button = tk.Button(root, text='Save', command=self.save_model)
+        self.save_button.pack()
+        self.load_button = tk.Button(root, text='Load', command=self.load_model)
+        self.load_button.pack()
+
+    def flip(self):
+        choice = self.entry.get()
+        if choice not in ['Heads', 'Tails']:
+            messagebox.showerror('Error', 'Invalid input')
+        else:
+            self.predictor.flip(choice)
+            prediction = self.predictor.predict()
+            if prediction != 'Random':
+                self.progress.start()
+                time.sleep(1)
+                self.progress.stop()
+            print(f"Prediction: {prediction}")
+
+    def on_combobox_change(self, event):
+        self.predictor.training_threshold = int(self.combo.get())
+
+    def save_model(self):
+        self.predictor.model.save('model.h5')
+
+    def load_model(self):
+        self.predictor.model = load_model('model.h5')
+
+def run_app():
+    root = tk.Tk()
+    app = App(root)
+    root.mainloop()
+
+if __name__ == '__main__':
+    run_app()
