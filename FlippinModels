@@ -1,0 +1,160 @@
+#!/opt/homebrew/bin/python3.11
+import tkinter as tk
+from tkinter import ttk
+from tkcalendar import DateEntry
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import pickle
+from datetime import datetime
+from collections import Counter
+import numpy as np
+from keras.models import Sequential
+from keras.layers import LSTM, Dense
+
+# Load previous data if available
+try:
+    with open('multiplier_data.pkl', 'rb') as f:
+        multipliers, total_spins, session_spins, date_data, notebook_data = pickle.load(f)
+except FileNotFoundError:
+    multipliers = {'2x': 0, '3x': 0, '5x': 0, '50x': 0}
+    total_spins = 0
+    session_spins = 0
+    date_data = {}
+    notebook_data = []
+# Autoscroll
+from collections import Counter
+def autoscroll(text_widget):
+    text_widget.see('end')
+
+# Flatten Date Data
+def flatten_date_data(date_data):
+    flat_data = []
+    for date, multipliers in date_data.items():
+        for multiplier, count in multipliers.items():
+            flat_data.append(count)
+    return flat_data
+
+# Most Common Prediction
+def get_most_common_prediction(predictions):
+    weighted_predictions = predictions.copy()
+    weighted_predictions.extend(['LSTM', 'LSTM'])
+    most_common_prediction = Counter(weighted_predictions).most_common(1)[0][0]
+    return most_common_prediction
+
+def predict(method, data):
+    if method == 'Bayesian':
+        return '2x'
+    elif method == 'Frequency':
+        return '3x'
+    elif method == 'Time-Adjusted Frequency':
+        return '5x'
+    elif method == 'Markov Chain':
+        return '50x'
+    elif method == 'LSTM':
+        X_train = np.array(data[:-1]).reshape(-1, 1, 1)
+        y_train = np.array(data[1:]).reshape(-1, 1)
+        if isinstance(X_train, np.ndarray) and isinstance(y_train, np.ndarray):
+            model = Sequential()
+            model.add(LSTM(50, activation='relu', input_shape=(1, 1)))
+            model.add(Dense(1))
+            model.compile(optimizer='adam', loss='mse')
+            model.fit(X_train, y_train, epochs=10, verbose=0)
+            last_data_point = np.array(data[-1]).reshape(1, 1, 1)
+            prediction = model.predict(last_data_point)
+            if prediction > 0.5:
+                return '2x'
+            else:
+                return '50x'
+        else:
+            print("Data types ain't right. Check 'em.")
+            return None  # Or some default value
+
+
+def update_count(multiplier):
+    global total_spins, session_spins, date_data, notebook_data
+    multipliers[multiplier] += 1
+    total_spins += 1
+    session_spins += 1
+    current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    date_data[current_date] = multipliers.copy()
+    if notebook_data and notebook_data[-1][0] == multiplier:
+        notebook_data[-1][1] += 1
+    else:
+        notebook_data.append([multiplier, 1])
+    notebook.delete(1.0, tk.END)
+    autoscroll(notebook)
+    for item in notebook_data:
+        notebook.insert(tk.END, f'{item[0]}: {item[1]} times\n')
+    prediction_methods = ['Bayesian', 'Frequency', 'Time-Adjusted Frequency', 'Markov Chain', 'LSTM']
+    all_predictions = []
+    prediction_text.delete(1.0, tk.END)
+    for method in prediction_methods:
+        prediction = predict(method, list(date_data.values()))
+        all_predictions.append(prediction)
+        if method == 'LSTM':
+            all_predictions.extend([prediction, prediction])
+        prediction_text.insert(tk.END, f'{method} Prediction: {prediction}\n')
+    most_common_prediction = Counter(all_predictions).most_common(1)[0][0]
+    prediction_text.insert(tk.END, f'\nneXXXt: {most_common_prediction}')
+    for key, label in percentage_labels.items():
+        percentage = (multipliers[key] / total_spins) * 100 if total_spins > 0 else 0
+        label.config(text=f'{key} - {percentage:.2f}%')
+    with open('multiplier_data.pkl', 'wb') as f:
+        pickle.dump((multipliers, total_spins, session_spins, date_data, notebook_data), f)
+    update_graphs()
+
+def update_graphs():
+    selected_date = date_entry.get_date().strftime('%Y-%m-%d')
+    filtered_data = {k: v for k, v in date_data.items() if k >= selected_date}
+    aggregated_data = {'2x': 0, '3x': 0, '5x': 0, '50x': 0}
+    for data in filtered_data.values():
+        for key, value in data.items():
+            aggregated_data[key] += value
+    ax1.clear()
+    ax2.clear()
+    labels = list(aggregated_data.keys())
+    values = list(aggregated_data.values())
+    ax1.bar(labels, values)
+    ax1.set_title('Bar Graph (Filtered)')
+    ax2.pie(values, labels=labels, autopct='%1.1f%%')
+    ax2.set_title('Pie Chart (Filtered)')
+    canvas.draw()
+
+root = tk.Tk()
+root.title('Figurin’ the scam…')
+total_spins_label = ttk.Label(root, text=f'Total Spins: {total_spins}')
+total_spins_label.pack()
+percentage_labels = {}
+for key in multipliers.keys():
+    percentage = (multipliers[key] / total_spins) * 100 if total_spins > 0 else 0
+    percentage_labels[key] = ttk.Label(root, text=f'{key} - {percentage:.2f}%')
+    percentage_labels[key].pack()
+for key in multipliers.keys():
+    ttk.Button(root, text=key, command=lambda key=key: update_count(key)).pack()
+date_entry = DateEntry(root)
+date_entry.pack()
+ttk.Button(root, text='Update Graphs', command=update_graphs).pack()
+notebook_label = ttk.Label(root, text='Notebook Data')
+notebook_label.pack()
+notebook = tk.Text(root, height=10, width=40, bg='yellow')
+
+# Change the font color to dark purple
+notebook.config(fg='purple')
+
+notebook.pack()
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+canvas = FigureCanvasTkAgg(fig, master=root)
+canvas.get_tk_widget().pack()
+prediction_label = ttk.Label(root, text='Predictions')
+prediction_label.pack()
+prediction_text = tk.Text(root, height=10, width=40, bg='blue')
+prediction_text.pack()
+
+# Button Setup for Keying Multipliers (only once)
+for key in multipliers.keys():
+    ttk.Button(root, text=key, command=lambda key=key: update_count(key)).pack()
+
+# After gathering all predictions
+all_predictions = ['Bayesian', 'Frequency', 'Time-Adjusted Frequency', 'Markov Chain', 'LSTM']
+most_common_prediction = get_most_common_prediction(all_predictions)
+prediction_text.insert(tk.END, f'\nWhats gon be NeXt: {most_common_prediction}')
